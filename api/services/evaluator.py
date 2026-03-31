@@ -21,19 +21,12 @@ evaluator.py  → plan-focused, uses EXPLAIN (FORMAT JSON) without ANALYZE
                 so it's instant and deterministic (no row execution needed),
                 compares cost estimates and node types structurally, designed
                 to generate the honest resume metric across 50 test queries.
-
-Why cost estimates instead of actual timing for evaluation?
------------------------------------------------------------
-When you run evaluator on 50 queries in scripts/benchmark.py, you don't
-want to actually execute each query (some take 30+ seconds before the fix).
-The planner's cost estimate is a reliable proxy: if the plan flips from
-Seq Scan (cost=3240) to Index Scan (cost=0.42), that's a verified win
-regardless of wall-clock time.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -44,14 +37,11 @@ import asyncpg
 # Confidence thresholds
 # ---------------------------------------------------------------------------
 
-CONFIDENCE_HIGH = 50.0    # cost reduced by > 50% → "high"
-CONFIDENCE_MEDIUM = 20.0  # cost reduced by > 20% → "medium"
-# anything below → "low"
+CONFIDENCE_HIGH = 50.0
+CONFIDENCE_MEDIUM = 20.0
 
-# Plan node types that indicate a full-table scan (always bad on large tables)
 SEQ_SCAN_NODES = {"Seq Scan", "Parallel Seq Scan"}
 
-# Plan node types that indicate index usage (good)
 INDEX_SCAN_NODES = {
     "Index Scan",
     "Index Only Scan",
@@ -66,30 +56,15 @@ INDEX_SCAN_NODES = {
 
 @dataclass
 class EvaluationResult:
-    """
-    Structured verdict on whether the suggested fix actually improves the plan.
-    This is what scripts/benchmark.py aggregates across 50 queries to generate
-    the resume metric.
-    """
     improvement_confirmed: bool
-
-    # Cost metrics
     original_cost: float
     optimized_cost: float
     cost_reduction_pct: float
-
-    # Plan structure
     plan_changed: bool
-    original_plan_type: str    # top-level or most relevant scan node
+    original_plan_type: str
     optimized_plan_type: str
-
-    # Verdict
-    confidence: str            # "high" | "medium" | "low" | "none"
-
-    # Optional detail on what changed
+    confidence: str
     details: list[str] = field(default_factory=list)
-
-    # Error if evaluation could not complete
     error: Optional[str] = None
 
 
@@ -98,16 +73,10 @@ class EvaluationResult:
 # ---------------------------------------------------------------------------
 
 def _get_top_node(plan_json: list[dict]) -> dict:
-    """Extract the top-level Plan node from EXPLAIN JSON output."""
     return plan_json[0]["Plan"]
 
 
 def _find_primary_scan(node: dict) -> str:
-    """
-    Walk the plan tree (BFS) and return the first scan node type found.
-    This gives us the most meaningful node — e.g. 'Index Scan' buried
-    under an Aggregate at the root.
-    """
     queue = [node]
     while queue:
         current = queue.pop(0)
@@ -115,12 +84,10 @@ def _find_primary_scan(node: dict) -> str:
         if node_type in SEQ_SCAN_NODES or node_type in INDEX_SCAN_NODES:
             return node_type
         queue.extend(current.get("Plans", []))
-    # Nothing found — return the root type
     return node.get("Node Type", "Unknown")
 
 
 def _collect_all_node_types(node: dict, types: Optional[set] = None) -> set[str]:
-    """Recursively collect every node type in the plan tree."""
     if types is None:
         types = set()
     types.add(node.get("Node Type", ""))
@@ -130,24 +97,17 @@ def _collect_all_node_types(node: dict, types: Optional[set] = None) -> set[str]
 
 
 def _total_cost(node: dict) -> float:
-    """Get the total cost estimate from the top-level node."""
     return float(node.get("Total Cost", 0.0))
 
 
 async def _get_plan(conn: asyncpg.Connection, query: str) -> list[dict]:
-    """
-    Run EXPLAIN (FORMAT JSON) — no ANALYZE, so the query is NOT executed.
-    Returns the parsed JSON plan.
-    """
     rows = await conn.fetch(f"EXPLAIN (FORMAT JSON) {query}")
     return json.loads(rows[0][0])
 
 
 # ---------------------------------------------------------------------------
-# Safety guard (same logic as benchmark.py — belt and suspenders)
+# Safety guard
 # ---------------------------------------------------------------------------
-
-import re
 
 _RISKY_PATTERN = re.compile(
     r"\b(DROP\s+TABLE|DROP\s+INDEX|TRUNCATE|DELETE\s+FROM|INSERT\s+INTO|UPDATE\s+\w)\b",
@@ -156,7 +116,6 @@ _RISKY_PATTERN = re.compile(
 
 
 def _is_safe_fix(fix_sql: str) -> bool:
-    """Reject DDL that could permanently destroy data."""
     return not bool(_RISKY_PATTERN.search(fix_sql))
 
 
@@ -181,13 +140,10 @@ def _build_details(
     optimized_type: str,
     cost_reduction_pct: float,
 ) -> list[str]:
-    """Generate human-readable detail strings for the evaluation report."""
     details = []
 
     if original_type in SEQ_SCAN_NODES and optimized_type in INDEX_SCAN_NODES:
-        details.append(
-            f"Sequential scan eliminated: {original_type} → {optimized_type}"
-        )
+        details.append(f"Sequential scan eliminated: {original_type} → {optimized_type}")
     elif original_type != optimized_type:
         details.append(f"Plan node changed: {original_type} → {optimized_type}")
     else:
@@ -200,9 +156,9 @@ def _build_details(
         f"({cost_reduction_pct:.1f}% reduction)"
     )
 
-    # Flag if nested loops remain on large row estimates
-    orig_types = _collect_all_node_types(original_node)
     opt_types = _collect_all_node_types(optimized_node)
+    orig_types = _collect_all_node_types(original_node)
+
     if "Nested Loop" in opt_types:
         opt_rows = optimized_node.get("Plan Rows", 0)
         if opt_rows > 10_000:
@@ -224,21 +180,27 @@ def _build_details(
 async def evaluate_fix(
     conn: asyncpg.Connection,
     query: str,
-    fix_sql: str,
+    fix_sql: Optional[str],
 ) -> EvaluationResult:
     """
     Apply fix_sql inside a transaction, compare plans, always rollback.
-
-    Parameters
-    ----------
-    conn     : asyncpg connection (not closed here)
-    query    : the original SELECT query
-    fix_sql  : DDL suggested by Claude (e.g. CREATE INDEX …)
-
-    Returns
-    -------
-    EvaluationResult with verdict, cost metrics, and plan type comparison.
+    Handles None fix_sql gracefully.
     """
+
+    # ── Guard: no fix SQL provided ────────────────────────────────────────
+    if not fix_sql or not fix_sql.strip():
+        return EvaluationResult(
+            improvement_confirmed=False,
+            original_cost=0.0,
+            optimized_cost=0.0,
+            cost_reduction_pct=0.0,
+            plan_changed=False,
+            original_plan_type="Unknown",
+            optimized_plan_type="Unknown",
+            confidence="none",
+            details=["No fix SQL provided — skipping evaluation."],
+        )
+
     # ── Step 1: safety check ──────────────────────────────────────────────
     if not _is_safe_fix(fix_sql):
         return EvaluationResult(
@@ -256,7 +218,7 @@ async def evaluate_fix(
             ),
         )
 
-    # ── Step 2: capture original plan (outside any transaction) ───────────
+    # ── Step 2: capture original plan ─────────────────────────────────────
     try:
         original_plan_json = await _get_plan(conn, query)
         original_node = _get_top_node(original_plan_json)
@@ -283,14 +245,10 @@ async def evaluate_fix(
     tr = conn.transaction()
     try:
         await tr.start()
-
-        # Strip CONCURRENTLY — not allowed inside a transaction block
         safe_fix = re.sub(r"\bCONCURRENTLY\b", "", fix_sql, flags=re.IGNORECASE)
         await conn.execute(safe_fix)
-
         optimized_plan_json = await _get_plan(conn, query)
         optimized_node = _get_top_node(optimized_plan_json)
-
     except Exception as exc:
         apply_error = str(exc)
     finally:
@@ -352,7 +310,6 @@ async def evaluate_fix(
 # ---------------------------------------------------------------------------
 
 def evaluation_to_dict(result: EvaluationResult) -> dict:
-    """Convert EvaluationResult to a JSON-serialisable dict."""
     return {
         "improvement_confirmed": result.improvement_confirmed,
         "original_cost": result.original_cost,

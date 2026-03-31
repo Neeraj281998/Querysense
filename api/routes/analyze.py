@@ -5,6 +5,7 @@ from api.models.schemas import (
     EvaluationSummary,
 )
 from api.db.connection import get_connection
+from api.db.history import save_analysis
 from api.services.explain import run_explain_analyze, get_schema_for_query
 from api.services.rule_engine import RuleEngine
 from api.services.claude import analyze_with_claude
@@ -34,7 +35,9 @@ async def analyze_query(
     5. Send to Claude (adds human explanation on top)
     6. Run benchmark (before/after timing with fix applied + rolled back)
     7. Run evaluator (plan-level verification of improvement)
-    8. Cache and return
+    8. Build response
+    9. Cache result
+    10. Save to history
     """
 
     database_url = request.database_url or settings.database_url
@@ -138,6 +141,9 @@ async def analyze_query(
     )
 
     # ── Step 9: Cache result ─────────────────────────────────────────────────
-    await set_cached(cache_key, response.dict())
+    await set_cached(cache_key, response.model_dump())
+
+    # ── Step 10: Save to history ─────────────────────────────────────────────
+    await save_analysis(response.model_dump())
 
     return response

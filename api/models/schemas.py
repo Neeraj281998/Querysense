@@ -43,7 +43,7 @@ class AIAnalysis(BaseModel):
     explanation: str
     bottleneck: str
     fix_type: str
-    fix_sql: str
+    fix_sql: Optional[str] = None        # None when Claude suggests a rewrite only
     optimized_query: Optional[str] = None
     confidence: str
     reasoning: str

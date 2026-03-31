@@ -1,0 +1,1 @@
+{"query": "SELECT o.id, u.email, SUM(oi.quantity * oi.unit_price) AS total FROM orders o JOIN users u ON u.id = o.user_id JOIN order_items oi ON oi.order_id = o.id WHERE o.status = 'completed' GROUP BY o.id, u.email ORDER BY total DESC LIMIT 10"}

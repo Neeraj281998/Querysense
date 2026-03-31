@@ -1,0 +1,1696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QuerySense — PostgreSQL Query Optimizer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@300;400;500;600&family=Geist:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+
+/* ── Reset ────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 14px; scroll-behavior: smooth; }
+
+/* ── Tokens ───────────────────────────────────────────────────── */
+:root {
+  --bg:          #080808;
+  --bg-raised:   #0f0f0f;
+  --bg-overlay:  #161616;
+  --bg-subtle:   #1a1a1a;
+
+  --border:      rgba(255,255,255,0.06);
+  --border-med:  rgba(255,255,255,0.10);
+  --border-hi:   rgba(255,255,255,0.16);
+
+  --text-hi:     #f0f0f0;
+  --text-med:    #a0a0a0;
+  --text-lo:     #505050;
+  --text-xlo:    #303030;
+
+  --green:       #22c55e;
+  --green-dim:   rgba(34,197,94,0.08);
+  --green-glow:  rgba(34,197,94,0.15);
+
+  --amber:       #f59e0b;
+  --amber-dim:   rgba(245,158,11,0.08);
+
+  --red:         #ef4444;
+  --red-dim:     rgba(239,68,68,0.08);
+
+  --blue:        #60a5fa;
+  --blue-dim:    rgba(96,165,250,0.08);
+
+  --mono: 'Geist Mono', 'Fira Code', monospace;
+  --sans: 'Geist', system-ui, sans-serif;
+
+  --radius-sm: 4px;
+  --radius:    6px;
+  --radius-lg: 10px;
+}
+
+/* ── Base ─────────────────────────────────────────────────────── */
+body {
+  background: var(--bg);
+  color: var(--text-med);
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.6;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Layout ───────────────────────────────────────────────────── */
+.wrap {
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 0 24px 120px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   NAV
+══════════════════════════════════════════════════════════════ */
+nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 52px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 48px;
+}
+
+.nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+}
+
+.nav-icon {
+  width: 24px; height: 24px;
+  border: 1px solid var(--border-med);
+  border-radius: var(--radius-sm);
+  display: grid;
+  place-items: center;
+  background: var(--bg-raised);
+}
+
+.nav-icon svg { display: block; }
+
+.nav-name {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-hi);
+  letter-spacing: 0.3px;
+}
+
+.nav-divider {
+  width: 1px; height: 14px;
+  background: var(--border-med);
+  margin: 0 10px;
+}
+
+.nav-desc {
+  font-size: 12px;
+  color: var(--text-lo);
+}
+
+.nav-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nav-chip {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-lo);
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  letter-spacing: 0.3px;
+}
+
+.nav-chip.live {
+  color: var(--green);
+  border-color: rgba(34,197,94,0.2);
+  background: var(--green-dim);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.live-dot {
+  width: 5px; height: 5px;
+  background: var(--green);
+  border-radius: 50%;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.5; transform: scale(0.8); }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   EDITOR
+══════════════════════════════════════════════════════════════ */
+.editor-section { margin-bottom: 2px; }
+
+.editor-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-lo);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+.editor-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+
+.editor-card:focus-within {
+  border-color: var(--border-hi);
+}
+
+.editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.editor-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.dot {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--border-med);
+}
+
+.editor-path {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-lo);
+}
+
+.editor-body {
+  display: flex;
+}
+
+.line-col {
+  padding: 16px 0;
+  min-width: 44px;
+  text-align: right;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.ln {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-xlo);
+  line-height: 1.72;
+  padding: 0 12px;
+  height: 24px;
+}
+
+.ln.active { color: var(--text-lo); }
+
+textarea {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: #e2ffd9;
+  padding: 16px 18px;
+  line-height: 1.72;
+  min-height: 120px;
+  caret-color: var(--green);
+}
+
+textarea::placeholder {
+  color: var(--text-xlo);
+}
+
+.editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 8px 8px 14px;
+  border-top: 1px solid var(--border);
+  gap: 12px;
+}
+
+.examples-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex: 1;
+}
+
+.examples-row::-webkit-scrollbar { display: none; }
+
+.ex-label {
+  font-size: 11px;
+  color: var(--text-lo);
+  margin-right: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.ex-btn {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-lo);
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+
+.ex-btn:hover {
+  color: var(--text-hi);
+  border-color: var(--border-hi);
+  background: var(--bg-subtle);
+}
+
+.run-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  padding: 8px 18px;
+  background: var(--green);
+  color: #030f07;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.run-btn:hover:not(:disabled) { background: #34d369; }
+.run-btn:active:not(:disabled) { transform: scale(0.98); }
+.run-btn:disabled { background: var(--bg-subtle); color: var(--text-lo); cursor: not-allowed; }
+
+.spinner {
+  width: 11px; height: 11px;
+  border: 1.5px solid rgba(3,15,7,0.25);
+  border-top-color: #030f07;
+  border-radius: 50%;
+  animation: spin 0.65s linear infinite;
+  display: none;
+}
+
+.run-btn.loading .spinner { display: block; }
+.run-btn.loading .run-label { display: none; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.kbd {
+  font-size: 10px;
+  opacity: 0.5;
+  border: 1px solid rgba(3,15,7,0.2);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+/* ── Error ────────────────────────────────────────────────────── */
+.err-bar {
+  display: none;
+  margin-top: 8px;
+  padding: 10px 14px;
+  border: 1px solid rgba(239,68,68,0.2);
+  border-radius: var(--radius);
+  background: var(--red-dim);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--red);
+}
+
+.err-bar.show { display: flex; align-items: flex-start; gap: 8px; }
+.err-bar::before { content: '✕'; flex-shrink: 0; margin-top: 1px; }
+
+/* ── Statusline ───────────────────────────────────────────────── */
+.statusline {
+  display: none;
+  margin-top: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  align-items: center;
+  gap: 0;
+  overflow-x: auto;
+}
+
+.statusline.show { display: flex; }
+
+.sl-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px 0 0;
+  margin-right: 14px;
+  border-right: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.sl-item:last-child { border-right: none; margin-right: 0; }
+
+.sl-key {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-lo);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.sl-val {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-hi);
+}
+
+.sl-val.green { color: var(--green); }
+.sl-val.red   { color: var(--red); }
+.sl-val.amber { color: var(--amber); }
+.sl-cache { margin-left: auto; color: var(--blue); font-family: var(--mono); font-size: 11px; }
+
+/* ═══════════════════════════════════════════════════════════════
+   VERDICT HERO
+══════════════════════════════════════════════════════════════ */
+#verdict {
+  display: none;
+  margin-top: 32px;
+}
+
+#verdict.show { display: block; }
+
+.verdict-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+  overflow: hidden;
+  display: flex;
+}
+
+.verdict-hero {
+  padding: 36px 40px;
+  border-right: 1px solid var(--border);
+  min-width: 240px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+
+/* subtle green glow behind the number when improvement confirmed */
+.verdict-hero.confirmed::before {
+  content: '';
+  position: absolute;
+  bottom: -40px; left: -20px;
+  width: 200px; height: 200px;
+  background: radial-gradient(circle, var(--green-glow) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.verdict-kicker {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-lo);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+.verdict-num {
+  font-family: var(--mono);
+  font-size: 68px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--green);
+  letter-spacing: -3px;
+  transition: color 0.4s;
+}
+
+.verdict-num.none  { color: var(--text-lo); }
+.verdict-num.low   { color: var(--amber); }
+
+.verdict-unit {
+  font-size: 12px;
+  color: var(--text-lo);
+  margin-top: 8px;
+  font-family: var(--mono);
+}
+
+.verdict-plan {
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.plan-before { color: var(--red); }
+.plan-arrow  { color: var(--text-lo); }
+.plan-after  { color: var(--green); }
+
+/* verdict metrics grid */
+.verdict-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.vg-cell {
+  padding: 28px 24px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.vg-cell:last-child { border-right: none; }
+
+.vg-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-lo);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+.vg-value {
+  font-family: var(--mono);
+  font-size: 24px;
+  font-weight: 500;
+  color: var(--text-hi);
+  line-height: 1.1;
+}
+
+.vg-value.green { color: var(--green); }
+.vg-value.red   { color: var(--red); }
+.vg-value.amber { color: var(--amber); }
+
+.vg-sub {
+  font-size: 11px;
+  color: var(--text-lo);
+  margin-top: 4px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   RESULTS GRID
+══════════════════════════════════════════════════════════════ */
+#results {
+  display: none;
+  margin-top: 2px;
+}
+
+#results.show { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
+
+/* ── Shared card shell ────────────────────────────── */
+.panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.panel-title {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-lo);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  letter-spacing: 0.3px;
+}
+
+.badge.green  { color: var(--green); background: var(--green-dim); border: 1px solid rgba(34,197,94,0.15); }
+.badge.amber  { color: var(--amber); background: var(--amber-dim); border: 1px solid rgba(245,158,11,0.15); }
+.badge.red    { color: var(--red);   background: var(--red-dim);   border: 1px solid rgba(239,68,68,0.15); }
+.badge.blue   { color: var(--blue);  background: var(--blue-dim);  border: 1px solid rgba(96,165,250,0.15); }
+.badge.muted  { color: var(--text-lo); background: var(--bg-subtle); border: 1px solid var(--border); }
+
+/* ═══════════════════════════════════════════════════════════════
+   LEFT PANEL — DIAGNOSIS
+══════════════════════════════════════════════════════════════ */
+
+/* ── Severity meter ───────────────────────────────── */
+.sev-bar {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+
+.sev-seg {
+  flex: 1;
+  padding: 10px 14px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.sev-seg:last-child { border-right: none; }
+
+.sev-pip {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.sev-pip.red   { background: var(--red);   box-shadow: 0 0 0 2px var(--red-dim); }
+.sev-pip.amber { background: var(--amber); box-shadow: 0 0 0 2px var(--amber-dim); }
+.sev-pip.green { background: var(--green); box-shadow: 0 0 0 2px var(--green-dim); }
+
+.sev-seg-label { font-size: 11px; color: var(--text-lo); }
+.sev-seg-label b { color: var(--text-hi); font-weight: 500; }
+
+/* ── Rule rows ────────────────────────────────────── */
+.rule-rows { flex: 1; }
+
+.rule-row {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  align-items: start;
+}
+
+.rule-row:last-child { border-bottom: none; }
+
+.rule-tag {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.3px;
+  padding: 3px 0;
+  text-align: center;
+  border-radius: var(--radius-sm);
+  margin-top: 2px;
+}
+
+.rule-tag.critical { background: var(--red-dim);   color: var(--red);   border: 1px solid rgba(239,68,68,0.15); }
+.rule-tag.warning  { background: var(--amber-dim); color: var(--amber); border: 1px solid rgba(245,158,11,0.15); }
+.rule-tag.info     { background: var(--blue-dim);  color: var(--blue);  border: 1px solid rgba(96,165,250,0.15); }
+
+.rule-tag-name {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text-lo);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.rule-title {
+  font-size: 13px;
+  color: var(--text-hi);
+  font-weight: 400;
+  margin-bottom: 3px;
+  line-height: 1.4;
+}
+
+.rule-detail {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-lo);
+  line-height: 1.55;
+}
+
+.rule-fix {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--green);
+  margin-top: 6px;
+  line-height: 1.5;
+  opacity: 0.85;
+}
+
+.rule-fix::before { content: '→ '; opacity: 0.4; }
+
+.no-issues {
+  padding: 20px 16px;
+  font-size: 12px;
+  color: var(--green);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0.7;
+}
+
+/* ── AI explanation ───────────────────────────────── */
+.ai-explain {
+  padding: 16px;
+  font-size: 13px;
+  color: var(--text-med);
+  line-height: 1.75;
+  border-bottom: 1px solid var(--border);
+  min-height: 60px;
+}
+
+.bottleneck {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  min-height: 44px;
+}
+
+.bn-tag {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--amber-dim);
+  color: var(--amber);
+  border: 1px solid rgba(245,158,11,0.15);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.bn-text {
+  font-size: 13px;
+  color: var(--amber);
+  line-height: 1.5;
+  opacity: 0.9;
+}
+
+.ai-reason {
+  padding: 12px 16px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-lo);
+  line-height: 1.65;
+  min-height: 32px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   RIGHT PANEL — ACTION
+══════════════════════════════════════════════════════════════ */
+
+/* ── Fix metadata ─────────────────────────────────── */
+.fix-meta {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+
+.fm-cell {
+  flex: 1;
+  padding: 12px 16px;
+  border-right: 1px solid var(--border);
+}
+
+.fm-cell:last-child { border-right: none; }
+
+.fm-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text-lo);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.fm-value {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-hi);
+}
+
+.fm-value.green { color: var(--green); }
+.fm-value.amber { color: var(--amber); }
+.fm-value.red   { color: var(--red); }
+
+/* ── SQL block ────────────────────────────────────── */
+.sql-block {
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  background: var(--bg);
+}
+
+.sql-block-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text-lo);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+.sql-code {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: #86efac;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.copy-btn {
+  position: absolute;
+  top: 16px; right: 16px;
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 4px 10px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-med);
+  border-radius: var(--radius-sm);
+  color: var(--text-lo);
+  cursor: pointer;
+  transition: all 0.15s;
+  letter-spacing: 0.3px;
+}
+
+.copy-btn:hover { color: var(--text-hi); border-color: var(--border-hi); }
+.copy-btn.ok { color: var(--green); border-color: rgba(34,197,94,0.3); background: var(--green-dim); }
+
+/* ── Benchmark table ──────────────────────────────── */
+.bench-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.bench-table thead th {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-lo);
+  padding: 9px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  font-weight: 400;
+}
+
+.bench-table thead th:not(:first-child) { text-align: right; }
+
+.bench-table tbody td {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-lo);
+}
+
+.bench-table tbody tr:last-child td { border-bottom: none; }
+.bench-table tbody td:first-child { font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase; }
+.bench-table tbody td:not(:first-child) { text-align: right; }
+
+.t-green { color: var(--green) !important; }
+.t-red   { color: var(--red)   !important; }
+.t-amber { color: var(--amber) !important; }
+.t-hi    { color: var(--text-hi) !important; }
+.t-bold  { font-weight: 600; }
+
+/* ── Progress bar ─────────────────────────────────── */
+.progress-wrap {
+  padding: 14px 16px;
+  border-top: 1px solid var(--border);
+  display: none;
+}
+
+.progress-labels {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-lo);
+  margin-bottom: 6px;
+}
+
+.progress-track {
+  height: 2px;
+  background: var(--bg-subtle);
+  border-radius: 2px;
+  overflow: visible;
+  position: relative;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--green);
+  width: 0%;
+  border-radius: 2px;
+  transition: width 1.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 0 12px rgba(34,197,94,0.4);
+  position: relative;
+}
+
+/* ── Eval block ───────────────────────────────────── */
+.eval-block {
+  padding: 14px 16px;
+}
+
+.eval-status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 10px;
+}
+
+.eval-indicator {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.eval-indicator.ok  { background: var(--green); box-shadow: 0 0 0 3px var(--green-dim); }
+.eval-indicator.nok { background: var(--amber); box-shadow: 0 0 0 3px var(--amber-dim); }
+
+.eval-status-text { font-size: 12px; }
+.eval-status-text.ok  { color: var(--green); }
+.eval-status-text.nok { color: var(--amber); }
+
+.eval-details {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.eval-details li {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-lo);
+  padding-left: 14px;
+  position: relative;
+  line-height: 1.5;
+}
+
+.eval-details li::before {
+  content: '›';
+  position: absolute;
+  left: 0;
+  color: var(--text-xlo);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   EMPTY STATE
+══════════════════════════════════════════════════════════════ */
+.empty {
+  margin-top: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 72px 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.empty-icon {
+  width: 40px; height: 40px;
+  border: 1px solid var(--border-med);
+  border-radius: var(--radius);
+  display: grid;
+  place-items: center;
+  background: var(--bg-raised);
+  margin-bottom: 4px;
+}
+
+.empty-title {
+  font-size: 14px;
+  color: var(--text-hi);
+  font-weight: 400;
+}
+
+.empty-desc {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-lo);
+  line-height: 1.6;
+  max-width: 380px;
+}
+
+.empty-flow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-lo);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.flow-step {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  color: var(--text-lo);
+}
+
+.flow-arrow { color: var(--text-xlo); }
+
+/* ═══════════════════════════════════════════════════════════════
+   TYPEWRITER
+══════════════════════════════════════════════════════════════ */
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+.tw-cursor::after {
+  content: '|';
+  color: var(--green);
+  animation: blink 1s step-end infinite;
+  margin-left: 1px;
+  font-weight: 300;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   COUNTER ANIMATION
+══════════════════════════════════════════════════════════════ */
+@keyframes countUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.count-in { animation: countUp 0.4s ease forwards; }
+
+/* ═══════════════════════════════════════════════════════════════
+   FOOTER
+══════════════════════════════════════════════════════════════ */
+footer {
+  margin-top: 80px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.footer-l { font-size: 11px; color: var(--text-lo); }
+
+.footer-r { display: flex; gap: 20px; }
+
+.footer-r a {
+  font-size: 11px;
+  color: var(--text-lo);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.footer-r a:hover { color: var(--text-hi); }
+
+/* ── Responsive ───────────────────────────────────── */
+@media (max-width: 780px) {
+  #results.show { grid-template-columns: 1fr; }
+  .verdict-card { flex-direction: column; }
+  .verdict-grid { grid-template-columns: 1fr 1fr; }
+  .verdict-hero { border-right: none; border-bottom: 1px solid var(--border); }
+  .verdict-num { font-size: 52px; }
+  .nav-desc, .nav-divider { display: none; }
+  .vg-cell:nth-child(2) { border-right: none; }
+  .vg-cell:nth-child(3) { border-right: 1px solid var(--border); border-top: 1px solid var(--border); }
+  .vg-cell:nth-child(4) { border-top: 1px solid var(--border); }
+}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- Nav -->
+  <nav>
+    <div class="nav-brand">
+      <div class="nav-icon">
+        <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+          <rect x="1" y="1" width="11" height="2" rx="0.5" fill="#505050"/>
+          <rect x="1" y="5" width="7"  height="2" rx="0.5" fill="#505050"/>
+          <rect x="1" y="9" width="5"  height="2" rx="0.5" fill="#505050"/>
+          <circle cx="10.5" cy="10" r="2" stroke="#22c55e" stroke-width="1"/>
+          <line x1="10.5" y1="9" x2="10.5" y2="11" stroke="#22c55e" stroke-width="0.8" stroke-linecap="round"/>
+          <line x1="9.5" y1="10" x2="11.5" y2="10" stroke="#22c55e" stroke-width="0.8" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <span class="nav-name">QuerySense</span>
+      <div class="nav-divider"></div>
+      <span class="nav-desc">PostgreSQL query optimizer</span>
+    </div>
+    <div class="nav-right">
+      <span class="nav-chip">Rule Engine + Claude AI</span>
+      <span class="nav-chip">v1.0</span>
+      <span class="nav-chip live"><span class="live-dot"></span>online</span>
+    </div>
+  </nav>
+
+  <!-- Editor -->
+  <div class="editor-section">
+    <div class="editor-card">
+      <div class="editor-header">
+        <div class="editor-dots">
+          <div class="dot"></div>
+          <div class="dot"></div>
+          <div class="dot"></div>
+        </div>
+        <span class="editor-path">query.sql — PostgreSQL</span>
+        <div style="width:52px"></div>
+      </div>
+      <div class="editor-body">
+        <div class="line-col" id="gutterEl">
+          <div class="ln active">1</div>
+        </div>
+        <textarea
+          id="qi"
+          placeholder="SELECT * FROM orders WHERE user_id = 5"
+          spellcheck="false"
+          rows="5"
+          autocomplete="off"
+        ></textarea>
+      </div>
+      <div class="editor-footer">
+        <div class="examples-row">
+          <span class="ex-label">Try:</span>
+          <button class="ex-btn" onclick="loadDemo(0)">missing index</button>
+          <button class="ex-btn" onclick="loadDemo(1)">date range</button>
+          <button class="ex-btn" onclick="loadDemo(2)">join query</button>
+          <button class="ex-btn" onclick="loadDemo(3)">group by</button>
+        </div>
+        <button class="run-btn" id="runBtn" onclick="analyze()">
+          <div class="spinner"></div>
+          <span class="run-label">Run <span class="kbd">⌘↵</span></span>
+        </button>
+      </div>
+    </div>
+    <div class="err-bar" id="errBar"></div>
+    <div class="statusline" id="sl">
+      <div class="sl-item">
+        <span class="sl-key">Plan</span>
+        <span class="sl-val" id="sl-plan">—</span>
+      </div>
+      <div class="sl-item">
+        <span class="sl-key">Cost</span>
+        <span class="sl-val" id="sl-cost">—</span>
+      </div>
+      <div class="sl-item">
+        <span class="sl-key">Time</span>
+        <span class="sl-val" id="sl-time">—</span>
+      </div>
+      <div class="sl-item">
+        <span class="sl-key">Rows</span>
+        <span class="sl-val" id="sl-rows">—</span>
+      </div>
+      <span class="sl-cache" id="sl-cache" style="display:none">⚡ cached</span>
+    </div>
+  </div>
+
+  <!-- Empty state -->
+  <div class="empty" id="emptyEl">
+    <div class="empty-icon">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+        <rect x="2" y="2" width="14" height="2" rx="0.5" fill="#303030"/>
+        <rect x="2" y="6" width="10" height="2" rx="0.5" fill="#303030"/>
+        <rect x="2" y="10" width="7"  height="2" rx="0.5" fill="#303030"/>
+        <circle cx="13.5" cy="13" r="3" stroke="#22c55e" stroke-width="1.2"/>
+        <line x1="13.5" y1="11.8" x2="13.5" y2="14.2" stroke="#22c55e" stroke-width="1" stroke-linecap="round"/>
+        <line x1="12.3" y1="13" x2="14.7" y2="13" stroke="#22c55e" stroke-width="1" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <div class="empty-title">Analyze a query</div>
+    <div class="empty-desc">
+      Paste any slow PostgreSQL query above and hit Run.<br>
+      QuerySense runs EXPLAIN ANALYZE, detects issues, and returns a plain-English fix with before/after proof.
+    </div>
+    <div class="empty-flow">
+      <span class="flow-step">EXPLAIN ANALYZE</span>
+      <span class="flow-arrow">→</span>
+      <span class="flow-step">Rule Engine</span>
+      <span class="flow-arrow">→</span>
+      <span class="flow-step">Claude AI</span>
+      <span class="flow-arrow">→</span>
+      <span class="flow-step">Benchmark</span>
+    </div>
+  </div>
+
+  <!-- Verdict -->
+  <div id="verdict">
+    <div class="verdict-card">
+      <div class="verdict-hero" id="verdictHero">
+        <div class="verdict-kicker">Latency Reduction</div>
+        <div class="verdict-num" id="vNum">—</div>
+        <div class="verdict-unit">percent faster after fix</div>
+        <div class="verdict-plan" id="vPlan"></div>
+      </div>
+      <div class="verdict-grid">
+        <div class="vg-cell">
+          <div class="vg-label">Before</div>
+          <div class="vg-value red" id="vBefore">—</div>
+          <div class="vg-sub">exec ms</div>
+        </div>
+        <div class="vg-cell">
+          <div class="vg-label">After</div>
+          <div class="vg-value green" id="vAfter">—</div>
+          <div class="vg-sub">exec ms</div>
+        </div>
+        <div class="vg-cell">
+          <div class="vg-label">Cost saved</div>
+          <div class="vg-value green" id="vCostRed">—</div>
+          <div class="vg-sub">percent</div>
+        </div>
+        <div class="vg-cell">
+          <div class="vg-label">Confidence</div>
+          <div class="vg-value" id="vConf">—</div>
+          <div class="vg-sub">ai rating</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <div id="results">
+
+    <!-- LEFT: Diagnosis -->
+    <div class="panel">
+
+      <!-- Rule engine -->
+      <div class="panel-hd">
+        <span class="panel-title">Rule Engine</span>
+        <span class="badge muted" id="ruleBadge">—</span>
+      </div>
+      <div class="sev-bar">
+        <div class="sev-seg">
+          <div class="sev-pip red"></div>
+          <span class="sev-seg-label"><b id="nCrit">0</b> critical</span>
+        </div>
+        <div class="sev-seg">
+          <div class="sev-pip amber"></div>
+          <span class="sev-seg-label"><b id="nWarn">0</b> warning</span>
+        </div>
+        <div class="sev-seg">
+          <div class="sev-pip green"></div>
+          <span class="sev-seg-label">deterministic</span>
+        </div>
+      </div>
+      <div id="ruleRows"></div>
+
+      <!-- AI -->
+      <div class="panel-hd" style="border-top:1px solid var(--border); margin-top:auto">
+        <span class="panel-title">AI Analysis</span>
+        <span class="badge muted" id="aiBadge">claude-haiku</span>
+      </div>
+      <div class="ai-explain" id="aiExp"></div>
+      <div class="bottleneck">
+        <span class="bn-tag">BOTTLENECK</span>
+        <span class="bn-text" id="aiBn"></span>
+      </div>
+      <div class="ai-reason" id="aiReason"></div>
+
+    </div>
+
+    <!-- RIGHT: Action -->
+    <div class="panel">
+
+      <!-- Fix -->
+      <div class="panel-hd">
+        <span class="panel-title">Fix</span>
+        <span class="badge blue" id="fixBadge">—</span>
+      </div>
+      <div class="fix-meta" id="fixMeta"></div>
+      <div class="sql-block">
+        <div class="sql-block-label">SQL to run</div>
+        <div class="sql-code" id="sqlCode"></div>
+        <button class="copy-btn" id="copyBtn" onclick="copySql()">Copy</button>
+      </div>
+
+      <!-- Benchmark -->
+      <div class="panel-hd" style="border-top:1px solid var(--border)">
+        <span class="panel-title">Benchmark</span>
+        <span class="badge muted" id="benchBadge">—</span>
+      </div>
+      <table class="bench-table" id="benchTbl"></table>
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-labels">
+          <span>0%</span>
+          <span id="progressPct" style="color:var(--text-med)"></span>
+          <span>100%</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+      </div>
+
+      <!-- Evaluator -->
+      <div class="panel-hd" style="border-top:1px solid var(--border)">
+        <span class="panel-title">Evaluator</span>
+        <span class="badge muted" id="evalBadge">—</span>
+      </div>
+      <div class="eval-block" id="evalBlock"></div>
+
+    </div>
+
+  </div>
+
+  <footer>
+    <span class="footer-l">QuerySense v1.0 · Rule engine + Claude AI · PostgreSQL 15 · Redis cache</span>
+    <div class="footer-r">
+      <a href="https://github.com/neerajprasad/querysense" target="_blank">GitHub</a>
+      <a href="http://localhost:8000/docs" target="_blank">API docs</a>
+      <a href="http://localhost:8000/health" target="_blank">Health</a>
+    </div>
+  </footer>
+
+</div>
+<script>
+const API = 'http://localhost:8000/api/v1/analyze';
+
+const DEMOS = [
+  `SELECT * FROM orders WHERE user_id = 5`,
+  `SELECT * FROM orders WHERE created_at > '2024-01-01'`,
+  `SELECT o.id, u.email, SUM(oi.quantity * oi.price) AS total\nFROM orders o\nJOIN users u ON u.id = o.user_id\nJOIN order_items oi ON oi.order_id = o.id\nWHERE o.status = 'completed'\nGROUP BY o.id, u.email\nORDER BY total DESC\nLIMIT 10`,
+  `SELECT user_id, COUNT(*) as order_count, SUM(total) as spent\nFROM orders\nGROUP BY user_id\nORDER BY spent DESC\nLIMIT 20`,
+];
+
+/* ── Gutter ─────────────────────────────────────── */
+function syncGutter() {
+  const ta = document.getElementById('qi');
+  const n  = Math.max(ta.value.split('\n').length, 1);
+  const activeLine = ta.value.substr(0, ta.selectionStart).split('\n').length;
+  document.getElementById('gutterEl').innerHTML =
+    Array.from({length: n}, (_, i) =>
+      `<div class="ln${i+1 === activeLine ? ' active' : ''}">${i+1}</div>`
+    ).join('');
+}
+
+document.getElementById('qi').addEventListener('input', syncGutter);
+document.getElementById('qi').addEventListener('click', syncGutter);
+document.getElementById('qi').addEventListener('keyup', syncGutter);
+document.getElementById('qi').addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); analyze(); }
+});
+
+function loadDemo(i) {
+  document.getElementById('qi').value = DEMOS[i];
+  syncGutter();
+  document.getElementById('qi').focus();
+}
+
+/* ── Utils ──────────────────────────────────────── */
+const esc = s => String(s||'')
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+const fmt = (n, d=2) => n == null ? '—'
+  : Number(n).toLocaleString(undefined, {minimumFractionDigits:d, maximumFractionDigits:d});
+
+function planCls(pt) {
+  if (!pt) return '';
+  if (pt.includes('Seq Scan')) return 'red';
+  if (pt.includes('Index') || pt.includes('Bitmap')) return 'green';
+  return '';
+}
+
+/* ── Typewriter ─────────────────────────────────── */
+function typewrite(el, text, speed=10, onDone) {
+  el.textContent = '';
+  el.classList.add('tw-cursor');
+  let i = 0;
+  const tick = () => {
+    if (i < text.length) {
+      el.textContent += text[i++];
+      setTimeout(tick, speed + (text[i-1] === '.' ? 60 : 0));
+    } else {
+      el.classList.remove('tw-cursor');
+      onDone && onDone();
+    }
+  };
+  tick();
+}
+
+/* ── Counter animation ──────────────────────────── */
+function animateCount(el, target, suffix='%', duration=800) {
+  const start = performance.now();
+  const tick = (now) => {
+    const p = Math.min((now - start) / duration, 1);
+    // ease out expo
+    const ease = p === 1 ? 1 : 1 - Math.pow(2, -10 * p);
+    el.textContent = (target * ease).toFixed(1) + suffix;
+    if (p < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
+/* ── Loading ────────────────────────────────────── */
+let timerRef = null;
+
+function setLoading(on) {
+  const btn = document.getElementById('runBtn');
+  btn.disabled = on;
+  btn.classList.toggle('loading', on);
+}
+
+/* ── Error ──────────────────────────────────────── */
+function showErr(msg) {
+  const el = document.getElementById('errBar');
+  el.textContent = msg;
+  el.classList.add('show');
+}
+function clearErr() { document.getElementById('errBar').classList.remove('show'); }
+
+/* ── Status line ────────────────────────────────── */
+function renderStatus(data) {
+  const p = data.plan_summary;
+  const pc = planCls(p.plan_type);
+
+  const planEl = document.getElementById('sl-plan');
+  planEl.textContent = p.plan_type;
+  planEl.className = 'sl-val' + (pc ? ' ' + pc : '');
+
+  document.getElementById('sl-cost').textContent = fmt(p.total_cost, 1);
+  document.getElementById('sl-time').textContent = fmt(p.execution_time_ms, 2) + ' ms';
+  document.getElementById('sl-rows').textContent = Number(p.rows_actual).toLocaleString();
+
+  const cacheEl = document.getElementById('sl-cache');
+  cacheEl.style.display = data.cached ? 'block' : 'none';
+
+  document.getElementById('sl').classList.add('show');
+}
+
+/* ── Verdict ────────────────────────────────────── */
+function renderVerdict(data) {
+  const bench = data.benchmark;
+  const ai    = data.ai_analysis;
+  const conf  = (ai.confidence || 'medium').toLowerCase();
+
+  document.getElementById('verdict').classList.add('show');
+
+  const numEl = document.getElementById('vNum');
+  const heroEl = document.getElementById('verdictHero');
+
+  if (bench && bench.improvement_pct > 0) {
+    animateCount(numEl, bench.improvement_pct);
+    numEl.className = bench.improvement_pct < 30 ? 'verdict-num low' : 'verdict-num';
+    heroEl.classList.toggle('confirmed', bench.improvement_confirmed);
+  } else {
+    numEl.textContent = 'n/a';
+    numEl.className = 'verdict-num none';
+  }
+
+  const b = bench?.before, a = bench?.after;
+  document.getElementById('vBefore').textContent   = b ? fmt(b.actual_time_ms, 3) : '—';
+  document.getElementById('vAfter').textContent    = a ? fmt(a.actual_time_ms, 3) : '—';
+  document.getElementById('vCostRed').textContent  = bench ? bench.cost_reduction_pct.toFixed(1) + '%' : '—';
+
+  const confEl = document.getElementById('vConf');
+  confEl.textContent = (ai.confidence || '—').toUpperCase();
+  confEl.className = 'vg-value ' + (conf === 'high' ? 'green' : conf === 'low' ? 'red' : 'amber');
+
+  const planEl = document.getElementById('vPlan');
+  if (b && a) {
+    planEl.innerHTML =
+      `<span class="plan-before">${esc(b.plan_type)}</span>` +
+      `<span class="plan-arrow"> → </span>` +
+      `<span class="plan-after">${esc(a.plan_type)}</span>`;
+  }
+}
+
+/* ── Rules ──────────────────────────────────────── */
+function renderRules(issues) {
+  const crit = (issues||[]).filter(i => i.severity === 'critical').length;
+  const warn = (issues||[]).filter(i => i.severity === 'warning').length;
+
+  document.getElementById('nCrit').textContent = crit;
+  document.getElementById('nWarn').textContent = warn;
+
+  const badge = document.getElementById('ruleBadge');
+  if (!issues || !issues.length) {
+    badge.textContent = 'all passed';
+    badge.className = 'badge green';
+    document.getElementById('ruleRows').innerHTML =
+      '<div class="no-issues">✓ &nbsp;No issues detected</div>';
+    return;
+  }
+
+  badge.textContent = issues.length + ' issue' + (issues.length !== 1 ? 's' : '');
+  badge.className = 'badge ' + (crit > 0 ? 'red' : 'amber');
+
+  document.getElementById('ruleRows').innerHTML = issues.map(issue => {
+    const sev = (issue.severity || 'warning').toLowerCase();
+    return `<div class="rule-row">
+      <div>
+        <div class="rule-tag ${sev}">${sev}</div>
+        <div class="rule-tag-name">${esc(issue.rule)}</div>
+      </div>
+      <div>
+        <div class="rule-title">${esc(issue.title || '')}</div>
+        ${issue.detail   ? `<div class="rule-detail">${esc(issue.detail)}</div>`   : ''}
+        ${issue.fix_hint ? `<div class="rule-fix">${esc(issue.fix_hint)}</div>`     : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/* ── AI ─────────────────────────────────────────── */
+function renderAI(ai) {
+  const conf = (ai.confidence || 'medium').toLowerCase();
+  document.getElementById('aiBadge').textContent = conf + ' confidence';
+  document.getElementById('aiBadge').className   = 'badge ' +
+    (conf === 'high' ? 'green' : conf === 'low' ? 'red' : 'amber');
+
+  // Chain typewriters: explain → bottleneck → reasoning
+  typewrite(document.getElementById('aiExp'), ai.explanation || '', 9, () => {
+    typewrite(document.getElementById('aiBn'), ai.bottleneck || '', 12, () => {
+      typewrite(document.getElementById('aiReason'), ai.reasoning || '', 7);
+    });
+  });
+}
+
+/* ── Fix ────────────────────────────────────────── */
+function renderFix(ai) {
+  const labels = {
+    index: 'Index', rewrite: 'Rewrite', both: 'Index + Rewrite', statistics: 'Statistics'
+  };
+  const label = labels[ai.fix_type] || (ai.fix_type || '').toUpperCase();
+  const conf  = (ai.confidence || 'medium').toLowerCase();
+
+  document.getElementById('fixBadge').textContent = label;
+
+  document.getElementById('fixMeta').innerHTML = `
+    <div class="fm-cell">
+      <div class="fm-label">Fix type</div>
+      <div class="fm-value">${esc(label)}</div>
+    </div>
+    <div class="fm-cell">
+      <div class="fm-label">Confidence</div>
+      <div class="fm-value ${conf}">${esc((ai.confidence||'').toUpperCase())}</div>
+    </div>
+    <div class="fm-cell">
+      <div class="fm-label">Model</div>
+      <div class="fm-value">claude-haiku-4-5</div>
+    </div>
+  `;
+
+  document.getElementById('sqlCode').textContent = ai.fix_sql || '';
+}
+
+/* ── Benchmark ──────────────────────────────────── */
+function renderBench(bench) {
+  if (!bench) return;
+  const b   = bench.before || {};
+  const a   = bench.after  || {};
+  const imp = bench.improvement_pct || 0;
+  const crd = bench.cost_reduction_pct || 0;
+
+  const bb = document.getElementById('benchBadge');
+  bb.textContent = imp > 0 ? `↓ ${imp.toFixed(1)}% faster` : 'no improvement';
+  bb.className = 'badge ' + (imp > 50 ? 'green' : imp > 0 ? 'amber' : 'red');
+
+  const bCls = planCls(b.plan_type);
+  const aCls = planCls(a.plan_type);
+
+  document.getElementById('benchTbl').innerHTML = `
+    <thead>
+      <tr>
+        <th>Metric</th><th>Before</th><th>After</th><th>Change</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Exec time</td>
+        <td class="t-red">${fmt(b.actual_time_ms, 3)} ms</td>
+        <td class="t-green">${a.actual_time_ms != null ? fmt(a.actual_time_ms, 3)+' ms' : '—'}</td>
+        <td class="${imp>0?'t-green t-bold':''}">${imp>0 ? '↓ '+imp.toFixed(1)+'%' : '—'}</td>
+      </tr>
+      <tr>
+        <td>Plan type</td>
+        <td class="${bCls?'t-'+bCls:''}">${esc(b.plan_type||'—')}</td>
+        <td class="${aCls?'t-'+aCls:''}">${a.plan_type ? esc(a.plan_type) : '—'}</td>
+        <td class="t-hi">→</td>
+      </tr>
+      <tr>
+        <td>Cost est.</td>
+        <td class="t-red">${fmt(b.total_cost)}</td>
+        <td class="t-green">${a.total_cost != null ? fmt(a.total_cost) : '—'}</td>
+        <td class="${crd>0?'t-green t-bold':''}">${crd>0 ? '↓ '+crd.toFixed(1)+'%' : '—'}</td>
+      </tr>
+      <tr>
+        <td>Rows scanned</td>
+        <td>${(b.rows_scanned||0).toLocaleString()}</td>
+        <td>${a.rows_scanned != null ? a.rows_scanned.toLocaleString() : '—'}</td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  `;
+
+  // Progress bar
+  const pw = document.getElementById('progressWrap');
+  pw.style.display = 'block';
+  document.getElementById('progressPct').textContent = imp.toFixed(1) + '%';
+  setTimeout(() => {
+    const fill = document.getElementById('progressFill');
+    fill.style.width = Math.min(imp, 100) + '%';
+    if (imp < 30) {
+      fill.style.background = 'var(--amber)';
+      fill.style.boxShadow = '0 0 12px rgba(245,158,11,0.4)';
+    }
+  }, 300);
+}
+
+/* ── Evaluator ──────────────────────────────────── */
+function renderEval(evl) {
+  if (!evl) return;
+  const ok = evl.improvement_confirmed;
+
+  document.getElementById('evalBadge').textContent = ok ? 'confirmed' : 'inconclusive';
+  document.getElementById('evalBadge').className   = 'badge ' + (ok ? 'green' : 'amber');
+
+  document.getElementById('evalBlock').innerHTML = `
+    <div class="eval-status">
+      <div class="eval-indicator ${ok?'ok':'nok'}"></div>
+      <span class="eval-status-text ${ok?'ok':'nok'}">
+        ${ok ? 'Improvement confirmed' : 'No significant improvement detected'}
+        — ${esc((evl.confidence||'').toUpperCase())} confidence
+      </span>
+    </div>
+    <ul class="eval-details">
+      ${(evl.details||[]).map(d=>`<li>${esc(d)}</li>`).join('')}
+    </ul>
+  `;
+}
+
+/* ── Copy ───────────────────────────────────────── */
+function copySql() {
+  const text = document.getElementById('sqlCode').textContent.trim();
+  const btn  = document.getElementById('copyBtn');
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = 'Copied ✓';
+    btn.classList.add('ok');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('ok'); }, 2000);
+  });
+}
+
+/* ── Analyze ────────────────────────────────────── */
+async function analyze() {
+  const query = document.getElementById('qi').value.trim();
+  if (!query) { showErr('Please enter a SQL query.'); return; }
+
+  clearErr();
+  setLoading(true);
+
+  // Reset UI
+  document.getElementById('emptyEl').style.display = 'none';
+  document.getElementById('verdict').classList.remove('show');
+  document.getElementById('results').classList.remove('show');
+  document.getElementById('sl').classList.remove('show');
+  document.getElementById('progressWrap').style.display = 'none';
+  document.getElementById('progressFill').style.width   = '0%';
+  document.getElementById('verdictHero').classList.remove('confirmed');
+
+  try {
+    const res = await fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query }),
+    });
+
+    if (res.status === 429) { showErr('Rate limit exceeded. Try again later.'); return; }
+
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try { detail = (await res.json()).detail || detail; } catch {}
+      showErr(detail);
+      return;
+    }
+
+    const data = await res.json();
+
+    renderStatus(data);
+    renderVerdict(data);
+    renderRules(data.rule_issues);
+    renderAI(data.ai_analysis);
+    renderFix(data.ai_analysis);
+    if (data.benchmark)  renderBench(data.benchmark);
+    if (data.evaluation) renderEval(data.evaluation);
+
+    document.getElementById('results').classList.add('show');
+    document.getElementById('verdict').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  } catch (err) {
+    showErr(
+      err.message?.includes('fetch')
+        ? 'Cannot connect to API at localhost:8000. Run: uvicorn api.main:app --port 8000'
+        : (err.message || 'Unexpected error')
+    );
+    document.getElementById('emptyEl').style.display = 'flex';
+  } finally {
+    setLoading(false);
+  }
+}
+
+/* ── Init ───────────────────────────────────────── */
+loadDemo(0);
+syncGutter();
+</script>
+</body>
+</html>

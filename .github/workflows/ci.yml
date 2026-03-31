@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.13"]
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER:     querysense
+          POSTGRES_PASSWORD: querysense
+          POSTGRES_DB:       querysense_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL:        postgresql://querysense:querysense@localhost:5432/querysense_test
+      REDIS_URL:           redis://localhost:6379
+      ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_MODEL:        claude-haiku-4-5-20251001
+      RATE_LIMIT_ENABLED:  false
+      DEBUG:               true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Lint with ruff
+        run: |
+          pip install ruff
+          ruff check api/ cli/ --select E,F,W --ignore E501
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v \
+            --tb=short \
+            --ignore=tests/test_claude.py \
+            -x
+
+      - name: Run Claude tests (mocked — no real API calls)
+        run: |
+          pytest tests/test_claude.py -v --tb=short
+
+      - name: Check API starts
+        run: |
+          uvicorn api.main:app --host 0.0.0.0 --port 8000 &
+          sleep 4
+          curl -sf http://localhost:8000/health | python -m json.tool
+          kill %1

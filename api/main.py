@@ -1,6 +1,8 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from api.routes import analyze, health
+from api.routes.history import router as history_router
 from api.db.connection import get_pool, close_pool
 from api.core.cache import get_redis, close_redis
 from api.core.config import get_settings
@@ -35,9 +37,21 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# ── CORS ──────────────────────────────────────────────────────────────────────
+# allow_origins=["*"] lets the HTML file work when opened directly from disk
+# (file:// origin) and from any future deployment URL
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 app.include_router(analyze.router, prefix="/api/v1", tags=["Analysis"])
 app.include_router(health.router, tags=["Health"])
+app.include_router(history_router)
 
 
 @app.get("/")
@@ -48,4 +62,5 @@ async def root():
         "docs": "/docs",
         "health": "/health",
         "analyze": "/api/v1/analyze",
+        "history": "/api/v1/history",
     }
