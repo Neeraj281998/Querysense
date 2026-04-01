@@ -3,7 +3,9 @@ import asyncpg
 import random
 from datetime import datetime, timedelta
 
-DATABASE_URL = "postgresql://querysense:querysense@localhost:5432/querysense"
+import os
+DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://querysense:querysense@localhost:5432/querysense")
+# DATABASE_URL = "postgresql://querysense:querysense@localhost:5432/querysense"
 
 
 async def seed():
